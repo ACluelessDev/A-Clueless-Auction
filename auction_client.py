@@ -1,7 +1,9 @@
 import sys
-from python_banyan.banyan_base import BanyanBase
 import argparse
 import signal
+import uuid
+from python_banyan.banyan_base import BanyanBase
+
 
 class AuctionClient(BanyanBase):
     def __init__(self, **kwargs):
@@ -11,20 +13,33 @@ class AuctionClient(BanyanBase):
                                             process_name=kwargs['process_name'],
                                             loop_time=kwargs['loop_time'])
 
-        self.set_subscriber_topic('send_bid')
-        self.set_subscriber_topic('send_sell')
+        self.client_name = kwargs['process_name']
+        self.connected = False
 
-        self.bidder_message = kwargs['Bidded.']
-        self.seller_message = kwargs['Sold.']
+        self.set_subscriber_topic('auction_status')
 
-        self.publish_payload({'Bidding received: ': self.bidder_message}, 'receive_bid')
-        self.publish_payload({'Selling received: ': self.seller_message}, 'receive_sell')
+        # Tell the Admin we exist
+        self.publish_payload({'client_name': self.client_name}, 'client_join')
+        print(f'{self.client_name}: contacting the auction server...')
 
         try:
             self.receive_loop()
         except KeyboardInterrupt:
             self.clean_up()
             sys.exit(0)
+
+    def incoming_message_processing(self, topic, payload):
+        if topic != 'auction_status' or not isinstance(payload, dict):
+            return
+
+        if payload.get('to') not in ('all_clients', self.client_name):
+            return
+
+        if not self.connected:
+            self.connected = True
+            print('Successfully connected to the auction server.')
+        print(payload['message'])
+
 
 def auction_client_cmdline():
     parser = argparse.ArgumentParser()
@@ -38,11 +53,10 @@ def auction_client_cmdline():
     parser.add_argument("-p", dest="publisher_port", default='7000',
                         help="Port used by Publisher")
 
-    parser.add_argument("-m", dest="number_of_messages", default="10",
-                        help="Number of messages to send")
-
-    parser.add_argument("-n", dest="process_name", default="EchoCMDClient",
-                        help="Process name")
+    # Creates a random four character name in case no name was manually inputted
+    parser.add_argument("-n", dest="process_name",
+                        default=f"Client-{uuid.uuid4().hex[:4]}",
+                        help="Unique client name")
 
     parser.add_argument("-t", dest="loop_time", default=".1",
                         help="Time to run in seconds")
@@ -52,17 +66,16 @@ def auction_client_cmdline():
     if args.back_plane_ip_address == 'None':
         args.back_plane_ip_address = None
 
-    kw_options = {'back_plane_ip_address': args.back_plane_ip_address,
-                  'subscriber_port': args.subscriber_port,
-                  'publisher_port': args.publisher_port,
-                  'number_of_messages': int(args.number_of_messages),
-                  'process_name': args.process_name,
-                  'loop_time': float(args.loop_time)}
+    AuctionClient(back_plane_ip_address=args.back_plane_ip_address,
+                  subscriber_port=args.subscriber_port,
+                  publisher_port=args.publisher_port,
+                  process_name=args.process_name,
+                  loop_time=float(args.loop_time))
 
-    AuctionClient(**kw_options)
 
 def signal_handler(sig, frame):
     raise KeyboardInterrupt
+
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)

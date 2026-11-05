@@ -1,21 +1,23 @@
 import sys
-from python_banyan.banyan_base import BanyanBase
 import argparse
 import signal
+from python_banyan.banyan_base import BanyanBase
+
 
 class AuctionAdmin(BanyanBase):
     def __init__(self, **kwargs):
         super(AuctionAdmin, self).__init__(back_plane_ip_address=kwargs['back_plane_ip_address'],
-                                            subscriber_port=kwargs['subscriber_port'],
-                                            publisher_port=kwargs['publisher_port'],
-                                            process_name=kwargs['process_name'],
-                                            loop_time=kwargs['loop_time'])
+                                           subscriber_port=kwargs['subscriber_port'],
+                                           publisher_port=kwargs['publisher_port'],
+                                           process_name=kwargs['process_name'],
+                                           loop_time=kwargs['loop_time'])
 
-        self.set_subscriber_topic('receive_bid')
-        self.set_subscriber_topic('receive_sell')
+        self.clients = set() # For multiple clients to join
+        self.set_subscriber_topic('client_join')
 
-        self.bidder_message = kwargs['bidder_message']
-        self.seller_message = kwargs['seller_message']
+        self.publish_payload({'to': 'all_clients', 'message': 'The auction is now open.'},
+                             'auction_status')
+        print('The auction is now open. Waiting for clients...')
 
         try:
             self.receive_loop()
@@ -23,13 +25,15 @@ class AuctionAdmin(BanyanBase):
             self.clean_up()
             sys.exit(0)
 
+    # Call this automatically for every message on a subscribed topic
+    def incoming_message_processing(self, topic, payload):
+        if topic == 'client_join' and isinstance(payload, dict) and 'client_name' in payload:
+            client_name = payload['client_name']
+            self.clients.add(client_name)
+            print(f'{client_name} joined. Total clients: {len(self.clients)}')
 
-    def process_action(self, topic, payload):
-        self.publish_payload({'Bidding received. ', self.bidder_message}, 'send_bid')
-        self.publish_payload({'Selling received. ', self.seller_message}, 'send_sell')
-
-        print(f'{self.bidder_message} placed a bid!')
-        print(f'{self.seller_message} placed a sell!')
+            self.publish_payload({'to': client_name, 'message': 'The auction is now open.'},
+                                 'auction_status')
 
 
 def auction_admin_cmdline():
@@ -55,13 +59,11 @@ def auction_admin_cmdline():
     if args.back_plane_ip_address == 'None':
         args.back_plane_ip_address = None
 
-    kw_options = {'back_plane_ip_address': args.back_plane_ip_address,
-                  'subscriber_port': args.subscriber_port,
-                  'publisher_port': args.publisher_port,
-                  'process_name': args.process_name,
-                  'loop_time': float(args.loop_time)}
-
-    AuctionAdmin(**kw_options)
+    AuctionAdmin(back_plane_ip_address=args.back_plane_ip_address,
+                 subscriber_port=args.subscriber_port,
+                 publisher_port=args.publisher_port,
+                 process_name=args.process_name,
+                 loop_time=float(args.loop_time))
 
 
 def signal_handler(sig, frame):
@@ -71,8 +73,5 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-
 if __name__ == '__main__':
     auction_admin_cmdline()
-
-    print('Admin for auction has been initialized.')
