@@ -14,19 +14,31 @@ class AuctionClient(BanyanBase):
                                             loop_time=kwargs['loop_time'])
 
         self.client_name = kwargs['process_name']
+        self.client_id = None
+
         self.connected = False
 
+        # Local auction information which is acquired by the Admin, but used by the local client for their own reference
+        self.auction_state = 'WAITING'
+        self.auction_items = {}
+
         self.set_subscriber_topic('auction_status')
+        self.set_subscriber_topic('auction_items')
+        self.set_subscriber_topic('auction_bids')
+        self.set_subscriber_topic('auction_result')
 
         # Tell the Admin we exist
         self.publish_payload({'client_name': self.client_name}, 'client_join')
         print(f'{self.client_name}: contacting the auction server...')
+
+        self.publish_payload({'client_name': self.client_name}, 'client_join')
 
         try:
             self.receive_loop()
         except KeyboardInterrupt:
             self.clean_up()
             sys.exit(0)
+
 
     def incoming_message_processing(self, topic, payload):
         if topic != 'auction_status' or not isinstance(payload, dict):
@@ -47,10 +59,10 @@ def auction_client_cmdline():
     parser.add_argument("-b", dest="back_plane_ip_address", default="None",
                         help="None or IP Address used by Backplane")
 
-    parser.add_argument("-s", dest="subscriber_port", default='8000',
+    parser.add_argument("-s", dest="subscriber_port", default='43124',
                         help="Port used by Subscriber")
 
-    parser.add_argument("-p", dest="publisher_port", default='7000',
+    parser.add_argument("-p", dest="publisher_port", default='43125',
                         help="Port used by Publisher")
 
     # Creates a random four character name in case no name was manually inputted
