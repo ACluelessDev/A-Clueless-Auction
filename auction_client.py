@@ -31,8 +31,6 @@ class AuctionClient(BanyanBase):
         self.publish_payload({'client_name': self.client_name}, 'client_join')
         print(f'{self.client_name}: contacting the auction server...')
 
-        self.publish_payload({'client_name': self.client_name}, 'client_join')
-
         try:
             self.receive_loop()
         except KeyboardInterrupt:
