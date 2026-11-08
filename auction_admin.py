@@ -1,6 +1,12 @@
 import sys
 import argparse
 import signal
+import uuid
+from tkinter import *
+from tkinter import font
+from tkinter import ttk
+import msgpack
+import zmq
 from python_banyan.banyan_base import BanyanBase
 
 
@@ -12,12 +18,45 @@ class AuctionAdmin(BanyanBase):
                                            process_name=kwargs['process_name'],
                                            loop_time=kwargs['loop_time'])
 
-        self.clients = set() # For multiple clients to join
+        self.clients = {}
+        self.auction_items = {}
+
+        # Needed to determine whether the Auction ends and no one can input anything
+        self.auction_state = 'WAITING'
+
         self.set_subscriber_topic('client_join')
+        self.set_subscriber_topic('item_submission')
+        self.set_subscriber_topic('bid_submission')
 
         self.publish_payload({'to': 'all_clients', 'message': 'The auction is now open.'},
                              'auction_status')
-        print('The auction is now open. Waiting for clients...')
+
+        self.root = Tk()
+        self.root.title("Auction Admin")
+        self.root.geometry("400x500")
+        self.window = ttk.Frame(self.root, borderwidth=5, relief="sunken", padding=12)
+        self.window.grid(row=0, column=0, sticky="nsew")
+        Label(self.window, text='The auction is now open. Waiting for clients...').pack()
+
+        self.footer = ttk.Frame(self.root, borderwidth=5, relief="sunken")
+        self.footer.grid(row=1, column=0, sticky="nsew")
+        Label(self.footer, text="Set auction time").grid(row=0, column=0)
+
+        self.auction_duration = Entry(self.footer)
+        self.auction_duration.grid(row=1, column=0)
+        Button(self.footer, text="Start Auction").grid(row=0, column=1, pady=5)
+        Button(self.footer, text="End Auction").grid(row=1, column=1, pady=5)
+
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=20)
+        self.root.rowconfigure(1, weight=1)
+
+        self.footer.columnconfigure(0, weight=3)
+        self.footer.columnconfigure(1, weight=1)
+        self.footer.rowconfigure(0, weight=1)
+        self.footer.rowconfigure(1, weight=1)
+
+        self.root.mainloop()
 
         try:
             self.receive_loop()
@@ -25,15 +64,247 @@ class AuctionAdmin(BanyanBase):
             self.clean_up()
             sys.exit(0)
 
+
     # Call this automatically for every message on a subscribed topic
     def incoming_message_processing(self, topic, payload):
+        if not isinstance(payload, dict): return
+
+        if topic == 'client_join':
+            pass
+        elif topic == 'item_submission':
+            pass
+        elif topic == 'bid_submission':
+            pass
+
         if topic == 'client_join' and isinstance(payload, dict) and 'client_name' in payload:
             client_name = payload['client_name']
-            self.clients.add(client_name)
             print(f'{client_name} joined. Total clients: {len(self.clients)}')
 
             self.publish_payload({'to': client_name, 'message': 'The auction is now open.'},
+                                'auction_status')
+
+
+    def broadcast_to_all(self, payload, topic):
+        payload['to'] = 'all_clients'
+        self.publish_payload(payload, topic)
+
+
+    def register_client(self, payload):
+        client_name = payload.get('client_name')
+
+        if not isinstance(client_name, str) or not client_name.strip(): return
+
+        client_name = client_name.strip()
+
+        # Prevent duplicate display names.
+        for client in self.clients.values():
+            if client['client_name'].casefold() == client_name.casefold():
+                self.publish_payload(
+                    {'to': client_name, 'event': 'client_name_duplicate','message': 'This name is already in use. Please choose another unique one.'},
+                    'auction_status'
+                )
+                return
+
+        # Generate a random client ID for the admin and client to pass around
+        client_id = uuid.uuid4().hex
+
+        self.clients[client_id] = { 'client_name': client_name }
+
+        print(f'\n{client_name} has joined the auction.')
+        print(f'Total clients: {len(self.clients)}')
+
+        self.publish_payload(
+            {'to': client_name, 'event': 'client_join', 'message': 'You have successfully joined the auction.', 'client_id': client_id},
+            'auction_status'
+        )
+
+        # Broadcast to all clients a new client has joined
+        self.broadcast_to_all(
+            {'event': 'client_joined', 'client_name': client_name},
+            'auction_status'
+        )
+
+        # Send items that have already been put up for auction to newly joined clients to catch up
+        for item in self.auction_items.values():
+            self.publish_payload(
+                {'to': client_name, 'event': 'new_item', 'item': item},
+                'auction_items'
+            )
+
+
+    def add_item(self, payload):
+        if self.auction_state not in ('WAITING', 'READY'): return
+
+        client_id = payload.get('client_id')
+
+        if client_id not in self.clients: return
+
+        item_name = payload.get('item_name')
+        starting_price = payload.get('starting_price')
+
+        if not isinstance(item_name, str) or not item_name.strip(): return
+
+        if isinstance(starting_price, bool): return
+
+        try:
+            starting_price = float(starting_price)
+        except (ValueError, TypeError):
+            return
+
+        if starting_price < 0: return
+
+        # Generate a random ID number for the item up to 8 characters
+        # Needed for the client and admin to read back easily for each individual item
+        item_id = uuid.uuid4().hex[:8].upper()
+
+        # Initialize some starting information for the specific item
+        item = {
+            'item_id': item_id,
+            'item_name': item_name.strip(),
+            'seller_id': client_id,
+            'seller_name': self.clients[client_id]['client_name'],
+            'starting_price': starting_price,
+            'highest_bid': starting_price,
+            'highest_bidder_id': None,
+            'highest_bidder_name': None
+        }
+
+        self.auction_items[item_id] = item
+
+        print('\n--- NEW ITEM HAS BEEN PUT UP FOR AUCTION! ---')
+        print(f'Item ID: {item_id}')
+        print(f'Item Name: {item['item_name']}')
+        print(f'Seller: {item['seller_name']}')
+        print(f'Starting Price: {starting_price:.2f}')
+        print('-------')
+
+        self.broadcast_to_all(
+            {'event': 'new_item', 'item': item.copy()},
+            'auction_items'
+        )
+
+
+        def add_bid(self, payload):
+            if self.auction_state != 'RUNNING': return
+
+            client_id = payload.get('client_id')
+            item_id = payload.get('item_id')
+            bid_amount = payload.get('bid_amount')
+
+            if client_id not in self.clients: return
+            if item_id not in self.auction_items: return
+
+            item = self.auction_items[item_id]
+
+            # If the client_id of the person trying to bid matches the ID of the seller, then reject the bid
+            # to prevent someone bidding on their own item
+            if client_id == item['seller_id']:
+                self.reject_bid(client_id, 'You cannot bid on your own item!')
+                return
+
+            if isinstance(bid_amount, bool): return
+
+            try:
+                bid_amount = float(bid_amount)
+            except (ValueError, TypeError):
+                return
+
+            if bid_amount <= item['highest_bid']:
+                self.reject_bid(client_id, 'Your bid must be greater than the current highest bid.')
+                return
+
+            item['highest_bid'] = bid_amount
+            item['highest_bidder_id'] = client_id
+            item['highest_bidder_name'] = self.clients[client_id]['client_name']
+
+            print(f'\n{item['seller_name']} has just placed a bid of {bid_amount:.2f} on {item['item_name']}.')
+
+            self.broadcast_to_all(
+                {
+                    'event': 'bid_accepted',
+                    'item_id': item_id,
+                    'item_name': item['item_name'],
+                    'seller_id': item['seller_id'],
+                    'seller_name': item['seller_name'],
+                    'bidder_id': client_id,
+                    'bidder_name': item['highest_biddder_name'],
+                    'bid_amount': bid_amount
+                },
+                'auction_bids'
+            )
+
+        def reject_bid(self, client_id, message):
+            client_name = self.clients[client_id]['client_name']
+
+            self.publish_payload({'to': client_name, 'event': 'bid_rejected', 'message': message},
                                  'auction_status')
+
+            print(f'\nBid rejected: {message}')
+
+
+        def start_auction(self):
+            if self.auction_state not in ('WAITING', 'READY'): return
+
+            self.auction_state = 'RUNNING'
+
+            print('\nTHE AUCTION HAS BEGUN!')
+
+            self.broadcast_to_all(
+                {
+                    'event': 'auction_started',
+                    'message': 'The auction has started!'
+                },
+                'auction_status'
+            )
+
+
+        def stop_auction(self):
+            if self.auction_state not in ('WAITING', 'READY', 'RUNNING'): return
+
+            self.auction_state = 'ENDED'
+
+            print('\nTHE AUCTION HAS ENDED!')
+
+            self.announce_results()
+
+            self.broadcast_to_all(
+                {
+                    'event': 'auction_ended',
+                    'message': 'The auction has concluded. Thank you attending the auction!'
+                },
+                'auction_status'
+            )
+
+
+        def announce_results(self):
+            print('\n--- Auction Results ---')
+
+            for item in self.auction_items.values():
+                print(f'\nItem: {item["item_name"]}')
+                print(f'Seller: {item["seller_name"]}')
+
+                if item['highest_bidder_id'] is not None:
+                    print(f'Winner: {item['highest_bidder_name']}')
+                    print(f'Winning Bid: {item['highest_bid']:.2f}')
+                else:
+                    print('No bids received.')
+
+                self.broadcast_to_all(
+                    {
+                        'event': 'item_result',
+                        'item_id': item['item_id'],
+                        'item_name': item['item_name'],
+                        'seller_name': item['seller_name'],
+                        'winner_id': item['highest_bidder_id'],
+                        'winner_name': item['highest_bidder_name'],
+                        'winning_bid': (
+                            item['highest_bid']
+                            if item['highest_bidder_id'] is not None
+                            else None
+                        )
+                    },
+                    'auction_results'
+                )
 
 
 def auction_admin_cmdline():
@@ -42,10 +313,10 @@ def auction_admin_cmdline():
     parser.add_argument("-b", dest="back_plane_ip_address", default="None",
                         help="None or IP Address used by Backplane")
 
-    parser.add_argument("-s", dest="subscriber_port", default='8000',
+    parser.add_argument("-s", dest="subscriber_port", default='43125',
                         help="Port used by Subscriber")
 
-    parser.add_argument("-p", dest="publisher_port", default='7000',
+    parser.add_argument("-p", dest="publisher_port", default='43124',
                         help="Port used by Publisher")
 
     parser.add_argument("-n", dest="process_name", default="AuctionAdmin",
