@@ -51,6 +51,46 @@ class AuctionClient(BanyanBase):
         print(payload['message'])
 
 
+    def submit_item(self, item_name, starting_price):
+        if not self.connected:
+            print('You are not connected to the auction server.')
+            return
+
+        if self.auction_state not in ('WAITING', 'READY'):
+            print('Auction is not accepting item submissions right now. Please wait.')
+            return
+
+        self.publish_payload({'client_id': self.client_id, 'item_name': item_name, 'starting_price': starting_price},
+                             'item_submission')
+
+        print('Item submission sent to Admin.')
+
+
+    def place_bid(self, item_id, bid_amount):
+        if not self.connected:
+            print('You are not connected to the auction server.')
+            return
+
+        if self.auction_state != 'RUNNING':
+            print('The auction is not currently running. Please hold.')
+            return
+
+        if item_id not in self.auction_items:
+            print('Item to bid not found. Please select an item within the item list.')
+            return
+
+        item = self.auction_items[item_id]
+
+        if item['seller_id'] == self.client_id:
+            print('You cannot bid on your own item!')
+            return
+
+        self.publish_payload({'client_id': self.client_id, 'item_id': item_id, 'bid_amount': bid_amount},
+                             'bid_submission')
+
+        print('Bid submission sent to Admin.')
+
+
 def auction_client_cmdline():
     parser = argparse.ArgumentParser()
 
