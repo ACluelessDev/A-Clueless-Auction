@@ -121,25 +121,34 @@ class AuctionAdmin(BanyanBase):
 
 
     def add_item(self, payload):
-        if self.auction_state not in ('WAITING', 'READY'): return
-
         client_id = payload.get('client_id')
 
         if client_id not in self.clients: return
 
+        if self.auction_state not in ('WAITING', 'READY'):
+            self.reject_item(client_id, 'The auction is not accepting any item submissions.')
+            return
+
         item_name = payload.get('item_name')
         starting_price = payload.get('starting_price')
 
-        if not isinstance(item_name, str) or not item_name.strip(): return
+        if not isinstance(item_name, str) or not item_name.strip():
+            self.reject_item(client_id, 'Please enter a valid item name.')
+            return
 
-        if isinstance(starting_price, bool): return
+        if isinstance(starting_price, bool):
+            self.reject_item(client_id, 'Please enter a valid number for the starting bid.')
+            return
 
         try:
             starting_price = float(starting_price)
         except (ValueError, TypeError):
+            self.reject_item(client_id, 'The starting price must be a valid number.')
             return
 
-        if starting_price < 0: return
+        if starting_price < 0:
+            self.reject_item(client_id, 'The starting price cannot be negative.')
+            return
 
         item_id = uuid.uuid4().hex[:8].upper()
 
@@ -167,6 +176,21 @@ class AuctionAdmin(BanyanBase):
             {'event': 'new_item', 'item': item.copy()},
             'auction_items'
         )
+
+
+    def reject_item(self, client_id, message):
+        client_name = self.clients[client_id]['client_name']
+
+        self.publish_payload(
+            {
+                'to': client_name,
+                'event': 'item_rejected',
+                'message': message
+            },
+        'auction_status'
+        )
+
+        print(f"\nYour item was rejected: {message}")
 
 
     def add_bid(self, payload):

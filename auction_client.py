@@ -74,7 +74,7 @@ class AuctionClient(BanyanBase):
             elif event == 'auction_ended':
                 self.auction_state = 'ENDED'
                 print('\nTHE AUCTION HAS ENDED!')
-            elif event == 'item_rejeted':
+            elif event == 'item_rejected':
                 print(f"\nYour item submission was rejected: {payload.get('message')}")
             elif event == 'bid_rejected':
                 print(f"\nYour bid was rejected: {payload.get('message')}")
