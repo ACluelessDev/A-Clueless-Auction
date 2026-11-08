@@ -150,6 +150,7 @@ class AuctionClient(BanyanBase):
 
         print('Item submission sent to Admin.')
 
+
     def place_bid(self, item_id, bid_amount):
         if not self.connected:
             print('You are not connected to the auction server.')
