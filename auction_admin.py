@@ -2,6 +2,8 @@ import sys
 import argparse
 import signal
 import uuid
+import time
+import threading
 from python_banyan.banyan_base import BanyanBase
 
 
@@ -17,6 +19,10 @@ class AuctionAdmin(BanyanBase):
         self.auction_items = {}
 
         self.auction_state = 'WAITING'
+
+        self.auction_duration = 0
+        self.auction_end_time = None
+        self.remaining_time = 0
 
         self.set_subscriber_topic('client_join')
         self.set_subscriber_topic('item_submission')
@@ -98,11 +104,21 @@ class AuctionAdmin(BanyanBase):
             'auction_status'
         )
 
+        self.publish_payload(
+            {
+                'to': client_name,
+                'event': 'timer_update',
+                'remaining_time': self.remaining_time
+            },
+            'auction_status'
+        )
+
         for item in self.auction_items.values():
             self.publish_payload(
                 {'to': client_name, 'event': 'new_item', 'item': item.copy()},
                 'auction_items'
             )
+
 
     def add_item(self, payload):
         if self.auction_state not in ('WAITING', 'READY'): return
@@ -152,6 +168,7 @@ class AuctionAdmin(BanyanBase):
             'auction_items'
         )
 
+
     def add_bid(self, payload):
         if self.auction_state != 'RUNNING': return
 
@@ -196,6 +213,7 @@ class AuctionAdmin(BanyanBase):
             'auction_bids'
         )
 
+
     def reject_bid(self, client_id, message):
         client_name = self.clients[client_id]['client_name']
 
@@ -210,24 +228,68 @@ class AuctionAdmin(BanyanBase):
 
         print(f'\nBid rejected: {message}')
 
-    def start_auction(self):
+
+    def start_auction(self, duration):
         if self.auction_state != 'WAITING': return
 
         if not self.auction_items:
             print('Cannot start auction. No items available.')
             return
 
+        if isinstance(duration, bool):
+            return
+
+        try:
+            duration = int(duration)
+        except (ValueError, TypeError):
+            print('Invalid auction duration.')
+            return
+
+        if duration <= 0:
+            print('Auction duration must be greater than zero.')
+            return
+
+        self.auction_duration = duration
+        self.remaining_time = duration
+
         self.auction_state = 'RUNNING'
+
+        self.auction_end_time = time.monotonic() + self.auction_duration
 
         print('\nTHE AUCTION HAS BEGUN!')
 
         self.broadcast_to_all(
             {
                 'event': 'auction_started',
-                'message': 'The auction has started!'
+                'message': 'The auction has started!',
+                'duration': self.auction_duration
             },
             'auction_status'
         )
+
+        self.timer_thread = threading.Thread(target=self.auction_timer, daemon=True)
+        self.timer_thread.start()
+
+
+    def update_auction_timer(self):
+        if self.auction_state != 'RUNNING': return
+
+        self.remaining_time = max(0, int(self.auction_end_time - time.monotonic()))
+
+        self.broadcast_to_all(
+            {'event': 'timer_update', 'remaining_time': self.remaining_time},
+            'auction_status'
+        )
+
+        if self.remaining_time <= 0:
+            self.stop_auction()
+
+
+    def auction_timer(self):
+        while self.auction_state == 'RUNNING':
+            self.update_auction_timer()
+            time.sleep(1)
+
 
     def stop_auction(self):
         if self.auction_state not in ('WAITING', 'READY', 'RUNNING'): return
@@ -245,6 +307,7 @@ class AuctionAdmin(BanyanBase):
             },
             'auction_status'
         )
+
 
     def announce_results(self):
         print('\n--- AUCTION RESULTS ---')
