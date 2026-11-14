@@ -3,6 +3,11 @@ import argparse
 import signal
 import uuid
 import time
+from tkinter import *
+from tkinter import font
+from tkinter import ttk
+import msgpack
+import zmq
 import threading
 from python_banyan.banyan_base import BanyanBase
 
@@ -32,11 +37,37 @@ class AuctionAdmin(BanyanBase):
                              'auction_status')
         print('The auction is now open. Waiting for clients...')
 
-        try:
-            self.receive_loop()
-        except KeyboardInterrupt:
-            self.clean_up()
-            sys.exit(0)
+        self.root = Tk()
+        self.root.title("Auction Admin")
+        self.root.geometry("400x500")
+        self.window = ttk.Frame(self.root, borderwidth=5, relief="sunken", padding=12)
+        self.window.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar = ttk.Scrollbar(self.window)
+        self.scrollbar.pack(side="right", fill="y")
+        self.auction_display = Listbox(self.window, yscrollcommand=self.scrollbar.set)
+        self.auction_display.pack(side="left", fill="both", expand=True)
+        self.scrollbar.config(command=self.auction_display.yview)
+        self.footer = ttk.Frame(self.root, borderwidth=5, relief="sunken")
+        self.footer.grid(row=1, column=0, sticky="nsew")
+        self.timer = Label(self.footer, text="Set auction time")
+        self.timer.grid(row=0, column=0)
+
+        self.auction_duration = Entry(self.footer)
+        self.auction_duration.grid(row=1, column=0)
+        Button(self.footer, text="Start Auction", command=lambda: self.start_auction(self.auction_duration.get())).grid(row=0, column=1, pady=5)
+        Button(self.footer, text="End Auction", command=self.stop_auction).grid(row=1, column=1, pady=5)
+
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=20)
+        self.root.rowconfigure(1, weight=1)
+
+        self.footer.columnconfigure(0, weight=3)
+        self.footer.columnconfigure(1, weight=1)
+        self.footer.rowconfigure(0, weight=1)
+        self.footer.rowconfigure(1, weight=1)
+
+        threading.Thread(target=self.receive_loop, daemon=True).start()
+        self.root.mainloop()
 
     def incoming_message_processing(self, topic, payload):
         if not isinstance(payload, dict): return
@@ -77,8 +108,8 @@ class AuctionAdmin(BanyanBase):
 
         self.clients[client_id] = {'client_name': client_name}
 
-        print(f'\n{client_name} has joined the auction.')
-        print(f'Total clients: {len(self.clients)}')
+        self.auction_display.insert(END, f'\n{client_name} has joined the auction.')
+        self.auction_display.insert(END, f'Total client(s): {len(self.clients)}')
 
         self.publish_payload(
             {
@@ -165,12 +196,12 @@ class AuctionAdmin(BanyanBase):
 
         self.auction_items[item_id] = item
 
-        print('\n--- NEW ITEM HAS BEEN PUT UP FOR AUCTION! ---')
-        print(f"Item ID: {item_id}")
-        print(f"Item Name: {item['item_name']}")
-        print(f"Seller: {item['seller_name']}")
-        print(f"Starting Price: {starting_price:.2f}")
-        print('-------')
+        self.auction_display.insert(END, '\n--- NEW ITEM HAS BEEN PUT UP FOR AUCTION! ---')
+        self.auction_display.insert(END, f"Item ID: {item_id}")
+        self.auction_display.insert(END, f"Item Name: {item['item_name']}")
+        self.auction_display.insert(END, f"Seller: {item['seller_name']}")
+        self.auction_display.insert(END, f"Starting Price: {starting_price:.2f}")
+        self.auction_display.insert(END,'------------------------------------------------')
 
         self.broadcast_to_all(
             {'event': 'new_item', 'item': item.copy()},
@@ -225,7 +256,7 @@ class AuctionAdmin(BanyanBase):
         item['highest_bidder_id'] = client_id
         item['highest_bidder_name'] = self.clients[client_id]['client_name']
 
-        print(
+        self.auction_display.insert(END,
             f"\n{item['highest_bidder_name']} has placed a bid of {bid_amount:.2f} on {item['item_name']}."
         )
 
@@ -291,14 +322,22 @@ class AuctionAdmin(BanyanBase):
             'auction_status'
         )
 
+
+
+
         self.timer_thread = threading.Thread(target=self.auction_timer, daemon=True)
         self.timer_thread.start()
+
 
 
     def update_auction_timer(self):
         if self.auction_state != 'RUNNING': return
 
         self.remaining_time = max(0, int(self.auction_end_time - time.monotonic()))
+
+        minutes = self.remaining_time // 60
+        seconds = self.remaining_time % 60
+        self.timer.config(text = f'Time remaining: {minutes:02d}:{seconds:02d}')
 
         self.broadcast_to_all(
             {'event': 'timer_update', 'remaining_time': self.remaining_time},
@@ -369,10 +408,10 @@ def auction_admin_cmdline():
     parser.add_argument("-b", dest="back_plane_ip_address", default="None",
                         help="None or IP Address used by Backplane")
 
-    parser.add_argument("-s", dest="subscriber_port", default='43124',
+    parser.add_argument("-s", dest="subscriber_port", default='43125',
                         help="Port used by Subscriber")
 
-    parser.add_argument("-p", dest="publisher_port", default='43125',
+    parser.add_argument("-p", dest="publisher_port", default='43124',
                         help="Port used by Publisher")
 
     parser.add_argument("-n", dest="process_name", default="AuctionAdmin",
