@@ -2,6 +2,7 @@ import sys
 import argparse
 import signal
 import uuid
+import ipaddress
 from tkinter import *
 from tkinter import font
 from tkinter import ttk
@@ -14,13 +15,13 @@ from python_banyan.banyan_base import BanyanBase
 
 class AuctionClient(BanyanBase):
     def __init__(self, **kwargs):
-        super(AuctionClient, self).__init__(back_plane_ip_address=kwargs['back_plane_ip_address'],
-                                            subscriber_port=kwargs['subscriber_port'],
-                                            publisher_port=kwargs['publisher_port'],
-                                            process_name=kwargs['process_name'],
-                                            loop_time=kwargs['loop_time'])
 
-        self.client_name = kwargs['process_name']
+        self.subscriber_port = kwargs['subscriber_port']
+        self.publisher_port = kwargs['publisher_port']
+        self.process_name = kwargs['process_name']
+        self.loop_time = kwargs['loop_time']
+
+        self.client_name = self.process_name
         self.client_id = None
 
         self.connected = False
@@ -29,28 +30,63 @@ class AuctionClient(BanyanBase):
         self.remaining_time = 0
         self.auction_items = {}
 
+        self.root = Tk()
+        self.root.title("Auction Registration")
+        self.root.geometry("300x280")
+        self.root.resizable(False, False)
+        self.content = ttk.Frame(self.root, borderwidth=5, relief="sunken", padding=12)
+        self.content.pack(fill="both", expand=True)
+
+        Label(self.content, text="Auction Admin / Backplane IP Address").pack(anchor="center", pady=5)
+        self.backplane_ip = Entry(self.content, justify="center")
+        self.backplane_ip.insert(0, kwargs['back_plane_ip_address'] or "")
+        self.backplane_ip.pack(anchor="center", padx=30, pady=5, fill="x")
+
+        Label(self.content, text="Register your name").pack(anchor="center", pady=10)
+        self.client_name_entry = Entry(self.content, justify="center")
+        self.client_name_entry.pack(anchor="center", padx=30, pady=5, fill="x")
+
+        Button(self.content, text="Enter", command=self.send).pack(anchor="center", padx=30, pady=10, fill="x")
+
+        self.root.mainloop()
+
+    def send(self):
+        backplane_ip = self.backplane_ip.get().strip()
+
+        try:
+            ipaddress.ip_address(backplane_ip)
+        except ValueError:
+            messagebox.showerror("Invalid IP Address", "Please enter a valid Auction Admin / Backplane IP address.")
+            return
+
+        client_name = self.client_name_entry.get().strip()
+
+        if not client_name:
+            messagebox.showerror("Invalid Name", "Please enter your client name.")
+            return
+
+        self.client_name = client_name
+
+        try:
+            super(AuctionClient, self).__init__(
+                back_plane_ip_address=backplane_ip,
+                subscriber_port=self.subscriber_port,
+                publisher_port=self.publisher_port,
+                process_name=self.process_name,
+                loop_time=self.loop_time
+            )
+
+        except Exception as error:
+            messagebox.showerror("Connection Error", f"Unable to connect to the Auction Backplane.\n\n{error}")
+            return
+
         self.set_subscriber_topic('auction_status')
         self.set_subscriber_topic('auction_items')
         self.set_subscriber_topic('auction_bids')
         self.set_subscriber_topic('auction_results')
 
-        self.root = Tk()
-        self.root.title("Auction Registration")
-        self.root.geometry("300x200")
-        self.root.resizable(False, False)
-        self.content = ttk.Frame(self.root, borderwidth=5, relief="sunken", padding=12)
-        self.content.pack(fill="both", expand=True)
-        Label(self.content, text="Register your name").pack(anchor="center", pady=20)
-        self.user_name = Entry(self.content, justify="center")
-        self.user_name.pack(anchor="center", padx=30, pady=10, fill="x")
-        Button(self.content, text="Enter", command=self.send).pack(anchor="center", padx=30, pady=10, fill="x")
-
-        threading.Thread(target=self.receive_loop, daemon=True).start()
-        self.root.mainloop()
-
-    def send(self):
-        self.client_name = self.user_name.get().strip()
         self.publish_payload({'client_name': self.client_name}, 'client_join')
+
         self.root.withdraw()
 
         self.auction = Toplevel(self.root)
@@ -69,7 +105,6 @@ class AuctionClient(BanyanBase):
         self.bid_display = Listbox(self.bid_window, yscrollcommand=self.bid_scroll.set)
         self.bid_display.pack(side="left", fill="both", expand=True)
         self.bid_scroll.config(command=self.bid_display.yview)
-
 
         self.sell_window = ttk.Frame(self.auction, borderwidth=5, relief="sunken")
         self.sell_window.grid(row=1, column=0, sticky="nsew")
@@ -103,6 +138,8 @@ class AuctionClient(BanyanBase):
         self.auction.rowconfigure(1, weight=3)
         self.auction.rowconfigure(2, weight=3)
 
+        threading.Thread(target=self.receive_loop, daemon=True).start()
+
     def bid(self):
         self.bidding = Toplevel(self.root)
         self.bidding.title(f'{self.client_name} is bidding...')
@@ -119,6 +156,7 @@ class AuctionClient(BanyanBase):
         self.bid_amount.pack(anchor="center", padx=30, pady=10)
         Button(self.bidding_window, text="Bid item", command=self.process_bid).pack(anchor="center", padx=30, pady=10,
                                                                                     fill="x")
+
     def sell(self):
         self.selling = Toplevel(self.root)
         self.selling.title(f'{self.client_name} is selling...')
@@ -144,7 +182,6 @@ class AuctionClient(BanyanBase):
         self.submit_item(self.item_name.get(), self.start_price.get())
         self.selling.destroy()
 
-
     def incoming_message_processing(self, topic, payload):
         if not isinstance(payload, dict): return
 
@@ -165,37 +202,34 @@ class AuctionClient(BanyanBase):
                     self.auction_display.insert(END, f'Client ID: {self.client_id}')
 
             elif event == 'client_name_duplicate':
-                if self.connected == False:
-                    self.client_id = None
-                    messagebox.showerror('Name Already Taken',f"\n{payload.get('message')}")
-                    self.auction.destroy()
-                    self.user_name.delete(0, END)
-                    self.root.deiconify()
+                self.connected = False
+                messagebox.showerror("Registration Error", payload.get('message'))
+
             elif event == 'client_joined':
-                if payload.get('client_name') != self.client_name:
-                    self.auction_display.insert(END,f"\n{payload.get('client_name')} has joined the auction!")
-                    self.auction_display.itemconfig(END, foreground="blue")
+                self.auction_display.insert(END, f"{payload.get('client_name')} has joined the auction!")
+
             elif event == 'auction_sync':
                 self.auction_state = payload.get('auction_state', 'WAITING')
+
             elif event == 'auction_started':
                 self.auction_state = 'RUNNING'
-                self.auction_display.insert(END,'\nTHE AUCTION HAS BEGUN!')
-                self.auction_display.itemconfig(END, foreground="blue")
+                self.auction_display.insert(END, '\nTHE AUCTION HAS BEGUN!')
+
             elif event == 'timer_update':
                 self.remaining_time = payload.get('remaining_time', 0)
                 minutes = self.remaining_time // 60
                 seconds = self.remaining_time % 60
                 self.timer.config(text = f'Time remaining: {minutes:02d}:{seconds:02d}')
+
             elif event == 'auction_ended':
                 self.auction_state = 'ENDED'
-                self.auction_display.insert(END,'\nTHE AUCTION HAS ENDED!')
-                self.auction_display.itemconfig(END, foreground="blue")
+                self.auction_display.insert(END, '\nTHE AUCTION HAS ENDED!')
+
             elif event == 'item_rejected':
-                self.auction_display.insert(END,f"\nYour item submission was rejected: {payload.get('message')}")
-                self.auction_display.itemconfig(END, foreground="red")
+                messagebox.showwarning("Item Rejected", payload.get('message'))
+
             elif event == 'bid_rejected':
-                self.auction_display.insert(END,f"\nYour bid was rejected: {payload.get('message')}")
-                self.auction_display.itemconfig(END, foreground="red")
+                messagebox.showwarning("Bid Rejected", payload.get('message'))
 
         elif topic == 'auction_items':
             if event == 'new_item':
@@ -222,9 +256,6 @@ class AuctionClient(BanyanBase):
                     self.bid_display.insert(END, f"Starting Price: {item['starting_price']}")
                     self.bid_display.insert(END, '-----------------------------------------------')
 
-
-
-
         elif topic == 'auction_bids':
             if event == 'bid_accepted':
                 item = payload.get('item')
@@ -245,25 +276,24 @@ class AuctionClient(BanyanBase):
 
         elif topic == 'auction_results':
             if event == 'item_result':
-                self.auction_display.insert(END,'\n--- AUCTION RESULTS ---')
-                self.auction_display.insert(END,f"Item: {payload['item_name']}")
+                self.auction_display.insert(END, '\n--- AUCTION RESULTS ---')
+                self.auction_display.insert(END, f"Item: {payload['item_name']}")
 
                 if payload['winner_name'] is not None:
-                    self.auction_display.insert(END,f"Winner: {payload['winner_name']}")
-                    self.auction_display.insert(END,f"Winning Bid: {payload['winning_bid']:.2f}")
+                    self.auction_display.insert(END, f"Winner: {payload['winner_name']}")
+                    self.auction_display.insert(END, f"Winning Bid: {payload['winning_bid']:.2f}")
                 else:
-                    self.auction_display.insert(END,'No bids were placed on this item.')
+                    self.auction_display.insert(END, 'No bids were placed on this item.')
 
-                self.auction_display.insert(END,'-------')
-
+                self.auction_display.insert(END, '-------')
 
     def submit_item(self, item_name, starting_price):
         if not self.connected:
-            messagebox.showwarning('Server Not Connected','You are not connected to the auction server.')
+            print('You are not connected to the auction server.')
             return
 
         if self.auction_state not in ('WAITING', 'READY'):
-            messagebox.showwarning('Auction Not Accepting','Auction is not accepting item submissions right now. Please wait.')
+            print('Auction is not accepting item submissions right now. Please wait.')
             return
 
         self.publish_payload(
@@ -277,24 +307,23 @@ class AuctionClient(BanyanBase):
 
         print('Item submission sent to Admin.')
 
-
     def place_bid(self, item_id, bid_amount):
         if not self.connected:
-            messagebox.showwarning('Server Not Connected','You are not connected to the auction server.')
+            print('You are not connected to the auction server.')
             return
 
         if self.auction_state != 'RUNNING':
-            messagebox.showwarning('Auction Not Running','The auction is not currently running. Please hold.')
+            print('The auction is not currently running. Please hold.')
             return
 
         if item_id not in self.auction_items:
-            messagebox.showerror('Bid Rejected','Item to bid not found. Please select an item within the item list.')
+            print('Item to bid not found. Please select an item within the item list.')
             return
 
         item = self.auction_items[item_id]
 
         if item['seller_id'] == self.client_id:
-            messagebox.showerror('Bid Rejected','You cannot bid on your own item!')
+            print('You cannot bid on your own item!')
             return
 
         self.publish_payload(
@@ -312,8 +341,8 @@ class AuctionClient(BanyanBase):
 def auction_client_cmdline():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-b", dest="back_plane_ip_address", default="None",
-                        help="None or IP Address used by Backplane")
+    parser.add_argument("-b", dest="back_plane_ip_address", default=None,
+                        help="IP Address used by Backplane")
 
     parser.add_argument("-s", dest="subscriber_port", default='43125',
                         help="Port used by Subscriber")
@@ -330,9 +359,6 @@ def auction_client_cmdline():
 
     args = parser.parse_args()
 
-    if args.back_plane_ip_address == 'None':
-        args.back_plane_ip_address = None
-
     AuctionClient(back_plane_ip_address=args.back_plane_ip_address,
                   subscriber_port=args.subscriber_port,
                   publisher_port=args.publisher_port,
@@ -343,8 +369,10 @@ def auction_client_cmdline():
 def signal_handler(sig, frame):
     raise KeyboardInterrupt
 
+
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
+
 
 if __name__ == '__main__':
     auction_client_cmdline()

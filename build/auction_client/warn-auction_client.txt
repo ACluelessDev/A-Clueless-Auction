@@ -31,7 +31,7 @@ missing module named multiprocessing.get_context - imported by multiprocessing (
 missing module named multiprocessing.TimeoutError - imported by multiprocessing (top-level), multiprocessing.pool (top-level)
 missing module named multiprocessing.set_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
 missing module named multiprocessing.get_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
-missing module named pyimod02_importers - imported by C:\Users\Default.DESKTOP-24G023P\Desktop\AuctionBaYan\A-Clueless-Auction\.venv\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (delayed)
+missing module named pyimod02_importers - imported by C:\Users\xxxte\AppData\Local\Python\pythoncore-3.15-64\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (delayed)
 missing module named _missing_stdlib_info - imported by traceback (optional)
 missing module named _dummy_thread - imported by numpy._core.arrayprint (optional)
 missing module named typing_extensions - imported by zmq.constants (conditional), zmq._typing (conditional, optional), zmq.sugar.socket (conditional), numpy._typing._nested_sequence (conditional), numpy.random.bit_generator (top-level)
