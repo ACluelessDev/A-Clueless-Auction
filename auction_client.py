@@ -165,12 +165,12 @@ class AuctionClient(BanyanBase):
                     self.auction_display.insert(END, f'Client ID: {self.client_id}')
 
             elif event == 'client_name_duplicate':
-                self.connected = False
-                self.client_id = None
-                messagebox.showerror('Name Already Taken',f"\n{payload.get('message')}")
-                self.auction.destroy()
-                self.user_name.delete(0, END)
-                self.root.deiconify()
+                if self.connected == False:
+                    self.client_id = None
+                    messagebox.showerror('Name Already Taken',f"\n{payload.get('message')}")
+                    self.auction.destroy()
+                    self.user_name.delete(0, END)
+                    self.root.deiconify()
             elif event == 'client_joined':
                 if payload.get('client_name') != self.client_name:
                     self.auction_display.insert(END,f"\n{payload.get('client_name')} has joined the auction!")
