@@ -9,6 +9,7 @@ from tkinter import ttk
 import msgpack
 import zmq
 import threading
+from tkinter import messagebox
 from python_banyan.banyan_base import BanyanBase
 
 
@@ -35,7 +36,6 @@ class AuctionAdmin(BanyanBase):
 
         self.publish_payload({'to': 'all_clients', 'message': 'The auction is now open.'},
                              'auction_status')
-        print('The auction is now open. Waiting for clients...')
 
         self.root = Tk()
         self.root.title("Auction Admin")
@@ -44,13 +44,14 @@ class AuctionAdmin(BanyanBase):
         self.window.grid(row=0, column=0, sticky="nsew")
         self.scrollbar = ttk.Scrollbar(self.window)
         self.scrollbar.pack(side="right", fill="y")
-        self.auction_display = Listbox(self.window, yscrollcommand=self.scrollbar.set)
-        self.auction_display.pack(side="left", fill="both", expand=True)
-        self.scrollbar.config(command=self.auction_display.yview)
+        self.admin_display = Listbox(self.window, yscrollcommand=self.scrollbar.set)
+        self.admin_display.pack(side="left", fill="both", expand=True)
+        self.scrollbar.config(command=self.admin_display.yview)
         self.footer = ttk.Frame(self.root, borderwidth=5, relief="sunken")
         self.footer.grid(row=1, column=0, sticky="nsew")
         self.timer = Label(self.footer, text="Set auction time")
         self.timer.grid(row=0, column=0)
+        self.admin_display.insert(END,'The auction is now open. Waiting for clients...')
 
         self.auction_duration = Entry(self.footer)
         self.auction_duration.grid(row=1, column=0)
@@ -108,8 +109,9 @@ class AuctionAdmin(BanyanBase):
 
         self.clients[client_id] = {'client_name': client_name}
 
-        self.auction_display.insert(END, f'\n{client_name} has joined the auction.')
-        self.auction_display.insert(END, f'Total client(s): {len(self.clients)}')
+        self.admin_display.insert(END, f'\n{client_name} has joined the auction.')
+        self.admin_display.insert(END, f'Total client(s): {len(self.clients)}')
+        self.admin_display.itemconfig(END, foreground="blue")
 
         self.publish_payload(
             {
@@ -196,12 +198,12 @@ class AuctionAdmin(BanyanBase):
 
         self.auction_items[item_id] = item
 
-        self.auction_display.insert(END, '\n--- NEW ITEM HAS BEEN PUT UP FOR AUCTION! ---')
-        self.auction_display.insert(END, f"Item ID: {item_id}")
-        self.auction_display.insert(END, f"Item Name: {item['item_name']}")
-        self.auction_display.insert(END, f"Seller: {item['seller_name']}")
-        self.auction_display.insert(END, f"Starting Price: {starting_price:.2f}")
-        self.auction_display.insert(END,'------------------------------------------------')
+        self.admin_display.insert(END, '\n--- NEW ITEM HAS BEEN PUT UP FOR AUCTION! ---')
+        self.admin_display.insert(END, f"Item ID: {item_id}")
+        self.admin_display.insert(END, f"Item Name: {item['item_name']}")
+        self.admin_display.insert(END, f"Seller: {item['seller_name']}")
+        self.admin_display.insert(END, f"Starting Price: {starting_price:.2f}")
+        self.admin_display.insert(END,'------------------------------------------------')
 
         self.broadcast_to_all(
             {'event': 'new_item', 'item': item.copy()},
@@ -221,7 +223,8 @@ class AuctionAdmin(BanyanBase):
         'auction_status'
         )
 
-        print(f"\nYour item was rejected: {message}")
+        self.admin_display.insert(END,f"\n{client_name}'s item was rejected: {message}")
+        self.admin_display.itemconfig(END, foreground="red")
 
 
     def add_bid(self, payload):
@@ -256,7 +259,7 @@ class AuctionAdmin(BanyanBase):
         item['highest_bidder_id'] = client_id
         item['highest_bidder_name'] = self.clients[client_id]['client_name']
 
-        self.auction_display.insert(END,
+        self.admin_display.insert(END,
             f"\n{item['highest_bidder_name']} has placed a bid of {bid_amount:.2f} on {item['item_name']}."
         )
 
@@ -281,14 +284,15 @@ class AuctionAdmin(BanyanBase):
             'auction_status'
         )
 
-        print(f'\nBid rejected: {message}')
+        self.admin_display.insert(END,f"\n{client_name}'s bid was rejected: {message}")
+        self.admin_display.itemconfig(END, foreground="red")
 
 
     def start_auction(self, duration):
         if self.auction_state != 'WAITING': return
 
         if not self.auction_items:
-            print('Cannot start auction. No items available.')
+            messagebox.showwarning('Auction Cannot Start', 'No item is up for auction yet')
             return
 
         if isinstance(duration, bool):
@@ -297,11 +301,11 @@ class AuctionAdmin(BanyanBase):
         try:
             duration = int(duration)
         except (ValueError, TypeError):
-            print('Invalid auction duration.')
+            messagebox.showerror('Invalid Input','Enter the auction duration in seconds')
             return
 
         if duration <= 0:
-            print('Auction duration must be greater than zero.')
+            messagebox.showwarning('Invalid Input','Auction duration must be greater than zero.')
             return
 
         self.auction_duration = duration
@@ -311,7 +315,8 @@ class AuctionAdmin(BanyanBase):
 
         self.auction_end_time = time.monotonic() + self.auction_duration
 
-        print('\nTHE AUCTION HAS BEGUN!')
+        self.admin_display.insert(END,'\nTHE AUCTION HAS BEGUN!')
+        self.admin_display.itemconfig(END, foreground="blue")
 
         self.broadcast_to_all(
             {
@@ -359,7 +364,8 @@ class AuctionAdmin(BanyanBase):
 
         self.auction_state = 'ENDED'
 
-        print('\nTHE AUCTION HAS ENDED!')
+        self.admin_display.insert(END,'\nTHE AUCTION HAS ENDED!')
+        self.admin_display.itemconfig(END, foreground="blue")
 
         self.announce_results()
 
@@ -373,16 +379,16 @@ class AuctionAdmin(BanyanBase):
 
 
     def announce_results(self):
-        print('\n--- AUCTION RESULTS ---')
+        self.admin_display.insert(END,'\n--- AUCTION RESULTS ---')
 
         for item in self.auction_items.values():
-            print(f"\nItem: {item['item_name']}")
+            self.admin_display.insert(END,f"\nItem: {item['item_name']}")
 
             if item['highest_bidder_id'] is not None:
-                print(f"Winner: {item['highest_bidder_name']}")
-                print(f"Winning Bid: {item['highest_bid']:.2f}")
+                self.admin_display.insert(END,f"Winner: {item['highest_bidder_name']}")
+                self.admin_display.insert(END,f"Winning Bid: {item['highest_bid']:.2f}")
             else:
-                print('No bids received.')
+                self.admin_display.insert(END,'No bids received.')
 
             self.broadcast_to_all(
                 {

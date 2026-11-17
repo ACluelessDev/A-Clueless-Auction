@@ -8,6 +8,7 @@ from tkinter import ttk
 import msgpack
 import zmq
 import threading
+from tkinter import messagebox
 from python_banyan.banyan_base import BanyanBase
 
 
@@ -40,15 +41,15 @@ class AuctionClient(BanyanBase):
         self.content = ttk.Frame(self.root, borderwidth=5, relief="sunken", padding=12)
         self.content.pack(fill="both", expand=True)
         Label(self.content, text="Register your name").pack(anchor="center", pady=20)
-        self.client_name = Entry(self.content, justify="center")
-        self.client_name.pack(anchor="center", padx=30, pady=10, fill="x")
+        self.user_name = Entry(self.content, justify="center")
+        self.user_name.pack(anchor="center", padx=30, pady=10, fill="x")
         Button(self.content, text="Enter", command=self.send).pack(anchor="center", padx=30, pady=10, fill="x")
 
         threading.Thread(target=self.receive_loop, daemon=True).start()
         self.root.mainloop()
 
     def send(self):
-        self.client_name = self.client_name.get()
+        self.client_name = self.user_name.get().strip()
         self.publish_payload({'client_name': self.client_name}, 'client_join')
         self.root.withdraw()
 
@@ -165,14 +166,21 @@ class AuctionClient(BanyanBase):
 
             elif event == 'client_name_duplicate':
                 self.connected = False
-                print(f"\n{payload.get('message')}")
+                self.client_id = None
+                messagebox.showerror('Name Already Taken',f"\n{payload.get('message')}")
+                self.auction.destroy()
+                self.user_name.delete(0, END)
+                self.root.deiconify()
             elif event == 'client_joined':
-                print(f"\n{payload.get('client_name')} has joined the auction!")
+                if payload.get('client_name') != self.client_name:
+                    self.auction_display.insert(END,f"\n{payload.get('client_name')} has joined the auction!")
+                    self.auction_display.itemconfig(END, foreground="blue")
             elif event == 'auction_sync':
                 self.auction_state = payload.get('auction_state', 'WAITING')
             elif event == 'auction_started':
                 self.auction_state = 'RUNNING'
-                print('\nTHE AUCTION HAS BEGUN!')
+                self.auction_display.insert(END,'\nTHE AUCTION HAS BEGUN!')
+                self.auction_display.itemconfig(END, foreground="blue")
             elif event == 'timer_update':
                 self.remaining_time = payload.get('remaining_time', 0)
                 minutes = self.remaining_time // 60
@@ -180,11 +188,14 @@ class AuctionClient(BanyanBase):
                 self.timer.config(text = f'Time remaining: {minutes:02d}:{seconds:02d}')
             elif event == 'auction_ended':
                 self.auction_state = 'ENDED'
-                print('\nTHE AUCTION HAS ENDED!')
+                self.auction_display.insert(END,'\nTHE AUCTION HAS ENDED!')
+                self.auction_display.itemconfig(END, foreground="blue")
             elif event == 'item_rejected':
-                print(f"\nYour item submission was rejected: {payload.get('message')}")
+                self.auction_display.insert(END,f"\nYour item submission was rejected: {payload.get('message')}")
+                self.auction_display.itemconfig(END, foreground="red")
             elif event == 'bid_rejected':
-                print(f"\nYour bid was rejected: {payload.get('message')}")
+                self.auction_display.insert(END,f"\nYour bid was rejected: {payload.get('message')}")
+                self.auction_display.itemconfig(END, foreground="red")
 
         elif topic == 'auction_items':
             if event == 'new_item':
@@ -234,25 +245,25 @@ class AuctionClient(BanyanBase):
 
         elif topic == 'auction_results':
             if event == 'item_result':
-                print('\n--- AUCTION RESULTS ---')
-                print(f"Item: {payload['item_name']}")
+                self.auction_display.insert(END,'\n--- AUCTION RESULTS ---')
+                self.auction_display.insert(END,f"Item: {payload['item_name']}")
 
                 if payload['winner_name'] is not None:
-                    print(f"Winner: {payload['winner_name']}")
-                    print(f"Winning Bid: {payload['winning_bid']:.2f}")
+                    self.auction_display.insert(END,f"Winner: {payload['winner_name']}")
+                    self.auction_display.insert(END,f"Winning Bid: {payload['winning_bid']:.2f}")
                 else:
-                    print('No bids were placed on this item.')
+                    self.auction_display.insert(END,'No bids were placed on this item.')
 
-                print('-------')
+                self.auction_display.insert(END,'-------')
 
 
     def submit_item(self, item_name, starting_price):
         if not self.connected:
-            print('You are not connected to the auction server.')
+            messagebox.showwarning('Server Not Connected','You are not connected to the auction server.')
             return
 
         if self.auction_state not in ('WAITING', 'READY'):
-            print('Auction is not accepting item submissions right now. Please wait.')
+            messagebox.showwarning('Auction Not Accepting','Auction is not accepting item submissions right now. Please wait.')
             return
 
         self.publish_payload(
@@ -269,21 +280,21 @@ class AuctionClient(BanyanBase):
 
     def place_bid(self, item_id, bid_amount):
         if not self.connected:
-            print('You are not connected to the auction server.')
+            messagebox.showwarning('Server Not Connected','You are not connected to the auction server.')
             return
 
         if self.auction_state != 'RUNNING':
-            print('The auction is not currently running. Please hold.')
+            messagebox.showwarning('Auction Not Running','The auction is not currently running. Please hold.')
             return
 
         if item_id not in self.auction_items:
-            print('Item to bid not found. Please select an item within the item list.')
+            messagebox.showerror('Bid Rejected','Item to bid not found. Please select an item within the item list.')
             return
 
         item = self.auction_items[item_id]
 
         if item['seller_id'] == self.client_id:
-            print('You cannot bid on your own item!')
+            messagebox.showerror('Bid Rejected','You cannot bid on your own item!')
             return
 
         self.publish_payload(
